@@ -347,11 +347,16 @@ img{display:block;-webkit-user-drag:none}
     var p = a.play();
     if (p && p.catch) p.catch(function () {});
   }
-  function play(i) {
+  // A cue that arrives too late (slow network) is dropped, so it never trails the picture.
+  function play(i, late) {
     var a = audio()[i];
     a._want = true;
     try { a.currentTime = 0; } catch (e) {}
-    resume(a);
+    a.muted = muted;
+    var t0 = Date.now(), p = a.play();
+    if (p && p.then) p.then(function () {
+      if (late && Date.now() - t0 > late) { a._want = false; a.pause(); }
+    }, function () {});
   }
   // Called inside the first tap: start every sound once, silently, so later timed sounds are allowed.
   function unlock() {
@@ -392,7 +397,7 @@ img{display:block;-webkit-user-drag:none}
     if (busy) return;
     busy = true;
     openBtn.disabled = true;
-    play(0);
+    play(0, 500);
     unlock();
     if (reduce || !canAnim) { return ready.then(swap); }
     boxIn.style.animation = 'none';
@@ -428,12 +433,12 @@ img{display:block;-webkit-user-drag:none}
     }
     opened.querySelector('h2').focus({ preventScroll: true });
     if (au) {
-      play(1);
+      play(1, 600);
       themeTimer = setTimeout(startTheme, 2200);
     }
   }
   function celebrate() {
-    play(2);
+    play(2, 700);
     var p = boxPoint();
     confetti(p.x, p.y, 70, 260);
     if (!reduce && canAnim) for (var i = 0; i < 5; i++) lantern(i * 160, true);
