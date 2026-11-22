@@ -118,10 +118,20 @@ img{display:block;-webkit-user-drag:none}
 .snd .off{display:none}
 .snd[aria-pressed="false"] .on{display:none}
 .snd[aria-pressed="false"] .off{display:inline}
-.snd.wait .on{display:none}
-.snd.wait .off{display:inline}
-.snd.wait{animation:sndwait 1.3s ease-in-out infinite}
-@keyframes sndwait{0%,100%{transform:scale(1);box-shadow:0 3px 0 #b8741a,0 0 0 0 rgba(255,214,120,.75)}50%{transform:scale(1.12);box-shadow:0 3px 0 #b8741a,0 0 0 10px rgba(255,214,120,0)}}
+html:not(.started) .snd{display:none}
+
+/* First tap: starts the music (phones allow sound only after a touch), then OPEN GIFT appears */
+.start{position:absolute;inset:0;z-index:4;width:100%;height:100%;padding:0;margin:0;border:0;background:transparent;cursor:pointer;
+  -webkit-appearance:none;appearance:none;touch-action:manipulation;-webkit-tap-highlight-color:transparent;color:var(--plum)}
+.start span{position:absolute;left:50%;top:87.3%;width:77%;height:12.4%;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:.45em;white-space:nowrap;
+  padding:0 .8em;border-radius:999px;background:var(--cream);border:.16em solid var(--gold);
+  box-shadow:0 .2em 0 #b8741a,0 .45em 1em rgba(40,10,80,.4);
+  font:500 calc(var(--sh,800px) * .036)/1 "Mitr",system-ui,sans-serif;letter-spacing:.03em;
+  transform:translate(-50%,-50%);animation:startp 1.4s ease-in-out infinite}
+.start svg{width:1.05em;height:1.05em;flex:none}
+.start:focus-visible span{outline:4px solid #fff;outline-offset:4px}
+@keyframes startp{0%,100%{transform:translate(-50%,-50%) scale(1)}50%{transform:translate(-50%,-50%) scale(1.04)}}
+html:not(.started) #openBtn{visibility:hidden}
 .snd:active{transform:translateY(2px);box-shadow:0 1px 0 #b8741a,0 3px 8px rgba(20,8,60,.4)}
 .snd:focus-visible{outline:3px solid #fff;outline-offset:3px}
 
@@ -169,6 +179,9 @@ img{display:block;-webkit-user-drag:none}
     </div>
     <button class="pbtn" id="openBtn" type="button" lang="en" aria-label="Open gift" style="--x:13.100%;--y:81.542%;--w:74.354%">
       <img src="img/btn_open.webp" alt="">
+    </button>
+    <button class="start" id="startBtn" type="button" lang="en">
+      <span><svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M9 3.5l11-2.2v13.4a3.3 3.3 0 1 1-2-3V6.2l-7 1.4v9.6a3.3 3.3 0 1 1-2-3z"/></svg>TAP TO START</span>
     </button>
   </section>
 
@@ -333,7 +346,7 @@ img{display:block;-webkit-user-drag:none}
   // The tune starts as soon as the gift appears if the phone allows it; otherwise on the first tap anywhere.
   var sndBtn = document.getElementById('sndBtn');
   var au = null, muted = false, unlocked = false, themeOn = false, themeTimer = 0;
-  var gestured = false, introTried = false, afterReveal = false, heard = false;
+  var gestured = false, introTried = false, afterReveal = false, started = false;
   try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
   function audio() {
     if (au) return au;
@@ -344,7 +357,7 @@ img{display:block;-webkit-user-drag:none}
       return a;
     });
     au[3].loop = true;
-    au[3].addEventListener('playing', function () { heard = true; setWaiting(false); });
+    au[3].addEventListener('playing', begin);
     au[2].addEventListener('ended', function () { if (themeOn && au[3].paused) resume(au[3]); });
     au[1].addEventListener('ended', themeAfterReveal);
     return au;
@@ -397,50 +410,38 @@ img{display:block;-webkit-user-drag:none}
     clearTimeout(themeTimer);
     startTheme(true);
   }
-  // Speaker shows "off" and pulses while the phone is still waiting for a first tap.
-  function setWaiting(w) {
-    sndBtn.classList.toggle('wait', w);
-    sndBtn.setAttribute('aria-pressed', w || muted ? 'false' : 'true');
+  // The first screen waits for one tap (sound needs it); if the phone already plays the tune, skip that step.
+  var startBtn = document.getElementById('startBtn');
+  function begin() {
+    if (started) return;
+    started = true;
+    root.classList.add('started');
+    if (startBtn.parentNode) startBtn.parentNode.removeChild(startBtn);
   }
+  startBtn.addEventListener('click', function () {
+    gestured = true;
+    begin();
+    startTheme(false);
+    unlock();
+    openBtn.focus({ preventScroll: true });
+  });
   function sceneShown() {
     if (introTried || busy || document.hidden) return;
     introTried = true;
     var p = startTheme(false);
-    var refused = function () {
-      if (gestured || heard) return;
-      if (au[3].paused) stopTheme();
-      setWaiting(true);
-    };
+    var refused = function () { if (!gestured && !started && au[3].paused) stopTheme(); };
     if (p && p.then) p.then(null, refused);
     setTimeout(refused, 1500);
   }
-  // First tap anywhere (not on the gift, which runs its own sequence) starts the tune.
-  function firstTap(e) {
-    if (gestured || busy) return;
-    var t = e.target;
-    if (t && t.closest && t.closest('#openBtn,#boxHit,#sndBtn')) return;
-    gestured = true;
-    setWaiting(false);
-    startTheme(false);
-    unlock();
-  }
-  document.addEventListener('touchend', firstTap, true);
-  document.addEventListener('click', firstTap, true);
   function setMuted(m) {
     muted = m;
-    setWaiting(false);
+    sndBtn.setAttribute('aria-pressed', m ? 'false' : 'true');
     au.forEach(function (a) { a.muted = m; });
     if (!m && themeOn && au[3].paused) resume(au[3]);
   }
   sndBtn.addEventListener('click', function () {
     gestured = true;
     unlock();
-    if (!heard && !busy) {
-      // Before any music has played, a tap on the speaker turns it on; it never mutes.
-      setMuted(false);
-      startTheme(false);
-      return;
-    }
     setMuted(!muted);
   });
   document.addEventListener('visibilitychange', function () {
@@ -456,7 +457,7 @@ img{display:block;-webkit-user-drag:none}
     busy = true;
     openBtn.disabled = true;
     gestured = true;
-    setWaiting(false);
+    begin();
     stopTheme();
     play(0, 500);
     unlock();
