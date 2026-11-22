@@ -118,6 +118,10 @@ img{display:block;-webkit-user-drag:none}
 .snd .off{display:none}
 .snd[aria-pressed="false"] .on{display:none}
 .snd[aria-pressed="false"] .off{display:inline}
+.snd.wait .on{display:none}
+.snd.wait .off{display:inline}
+.snd.wait{animation:sndwait 1.3s ease-in-out infinite}
+@keyframes sndwait{0%,100%{transform:scale(1);box-shadow:0 3px 0 #b8741a,0 0 0 0 rgba(255,214,120,.75)}50%{transform:scale(1.12);box-shadow:0 3px 0 #b8741a,0 0 0 10px rgba(255,214,120,0)}}
 .snd:active{transform:translateY(2px);box-shadow:0 1px 0 #b8741a,0 3px 8px rgba(20,8,60,.4)}
 .snd:focus-visible{outline:3px solid #fff;outline-offset:3px}
 
@@ -275,7 +279,7 @@ img{display:block;-webkit-user-drag:none}
   Promise.race([
     Promise.all([].map.call(closed.querySelectorAll('img'), decoded)),
     new Promise(function (r) { setTimeout(r, 8000); })
-  ]).then(function () { root.classList.add('ready'); });
+  ]).then(function () { root.classList.add('ready'); sceneShown(); });
 
   // Sky lanterns drift up out of the opened box.
   var lanLayer = document.getElementById('lanterns');
@@ -326,8 +330,10 @@ img{display:block;-webkit-user-drag:none}
 
   // Sound: plain <audio> elements (they keep playing with the iPhone silent switch on).
   // 1 = box opening, 2 = reveal, 3 = LET'S GO!, 4 = birthday tune (loops). Levels are baked into the files.
+  // The tune starts as soon as the gift appears if the phone allows it; otherwise on the first tap anywhere.
   var sndBtn = document.getElementById('sndBtn');
   var au = null, muted = false, unlocked = false, themeOn = false, themeTimer = 0;
+  var gestured = false, introTried = false, afterReveal = false, heard = false;
   try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
   function audio() {
     if (au) return au;
@@ -338,14 +344,17 @@ img{display:block;-webkit-user-drag:none}
       return a;
     });
     au[3].loop = true;
+    au[3].addEventListener('playing', function () { heard = true; setWaiting(false); });
     au[2].addEventListener('ended', function () { if (themeOn && au[3].paused) resume(au[3]); });
-    au[1].addEventListener('ended', startTheme);
+    au[1].addEventListener('ended', themeAfterReveal);
     return au;
   }
+  audio();
   function resume(a) {
     a.muted = muted;
     var p = a.play();
     if (p && p.catch) p.catch(function () {});
+    return p;
   }
   // A cue that arrives too late (slow network) is dropped, so it never trails the picture.
   function play(i, late) {
@@ -358,7 +367,7 @@ img{display:block;-webkit-user-drag:none}
       if (late && Date.now() - t0 > late) { a._want = false; a.pause(); }
     }, function () {});
   }
-  // Called inside the first tap: start every sound once, silently, so later timed sounds are allowed.
+  // Called inside a tap: start every other sound once, silently, so later timed sounds are allowed.
   function unlock() {
     if (unlocked) return;
     unlocked = true;
@@ -370,26 +379,75 @@ img{display:block;-webkit-user-drag:none}
       if (p && p.then) p.then(done, done); else done();
     });
   }
-  function startTheme() {
-    if (themeOn) return;
+  function startTheme(fromTop) {
     themeOn = true;
-    clearTimeout(themeTimer);
-    play(3);
+    au[3]._want = true;
+    if (fromTop) { try { au[3].currentTime = 0; } catch (e) {} }
+    if (document.hidden) return null;
+    return resume(au[3]);
   }
+  function stopTheme() {
+    themeOn = false;
+    au[3]._want = false;
+    au[3].pause();
+  }
+  function themeAfterReveal() {
+    if (afterReveal) return;
+    afterReveal = true;
+    clearTimeout(themeTimer);
+    startTheme(true);
+  }
+  // Speaker shows "off" and pulses while the phone is still waiting for a first tap.
+  function setWaiting(w) {
+    sndBtn.classList.toggle('wait', w);
+    sndBtn.setAttribute('aria-pressed', w || muted ? 'false' : 'true');
+  }
+  function sceneShown() {
+    if (introTried || busy || document.hidden) return;
+    introTried = true;
+    var p = startTheme(false);
+    var refused = function () {
+      if (gestured || heard) return;
+      if (au[3].paused) stopTheme();
+      setWaiting(true);
+    };
+    if (p && p.then) p.then(null, refused);
+    setTimeout(refused, 1500);
+  }
+  // First tap anywhere (not on the gift, which runs its own sequence) starts the tune.
+  function firstTap(e) {
+    if (gestured || busy) return;
+    var t = e.target;
+    if (t && t.closest && t.closest('#openBtn,#boxHit,#sndBtn')) return;
+    gestured = true;
+    setWaiting(false);
+    startTheme(false);
+    unlock();
+  }
+  document.addEventListener('touchend', firstTap, true);
+  document.addEventListener('click', firstTap, true);
   function setMuted(m) {
     muted = m;
-    sndBtn.setAttribute('aria-pressed', m ? 'false' : 'true');
-    if (!au) return;
+    setWaiting(false);
     au.forEach(function (a) { a.muted = m; });
     if (!m && themeOn && au[3].paused) resume(au[3]);
   }
-  sndBtn.addEventListener('click', function () { setMuted(!muted); });
-  document.addEventListener('visibilitychange', function () {
-    if (!au || !themeOn) return;
-    if (document.hidden) au[3].pause();
-    else if (!muted) resume(au[3]);
+  sndBtn.addEventListener('click', function () {
+    gestured = true;
+    unlock();
+    if (!heard && !busy) {
+      // Before any music has played, a tap on the speaker turns it on; it never mutes.
+      setMuted(false);
+      startTheme(false);
+      return;
+    }
+    setMuted(!muted);
   });
-  ready.then(function () { setTimeout(audio, 300); });
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) { au[3].pause(); return; }
+    if (!introTried) sceneShown();
+    else if (themeOn && !muted) resume(au[3]);
+  });
 
   var busy = false;
   function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
@@ -397,6 +455,9 @@ img{display:block;-webkit-user-drag:none}
     if (busy) return;
     busy = true;
     openBtn.disabled = true;
+    gestured = true;
+    setWaiting(false);
+    stopTheme();
     play(0, 500);
     unlock();
     if (reduce || !canAnim) { return ready.then(swap); }
@@ -432,10 +493,8 @@ img{display:block;-webkit-user-drag:none}
       for (var i = 0; i < 6; i++) lantern(400 + i * 2300, false);
     }
     opened.querySelector('h2').focus({ preventScroll: true });
-    if (au) {
-      play(1, 600);
-      themeTimer = setTimeout(startTheme, 2200);
-    }
+    play(1, 600);
+    themeTimer = setTimeout(themeAfterReveal, 2200);
   }
   function celebrate() {
     play(2, 700);
